@@ -1409,7 +1409,8 @@ static inline void do_trace_initcall_level(const char *level)
 int __init_or_module do_one_initcall(initcall_t fn)
 {
 	int count = preempt_count();
-	char msgbuf[64];
+	bool preempt_imbalanced;
+	bool irqs_left_disabled;
 	int ret;
 
 	if (initcall_blacklisted(fn))
@@ -1419,17 +1420,17 @@ int __init_or_module do_one_initcall(initcall_t fn)
 	ret = fn();
 	do_trace_initcall_finish(fn, ret);
 
-	msgbuf[0] = 0;
-
-	if (preempt_count() != count) {
-		sprintf(msgbuf, "preemption imbalance ");
+	preempt_imbalanced = preempt_count() != count;
+	if (preempt_imbalanced)
 		preempt_count_set(count);
-	}
-	if (irqs_disabled()) {
-		strlcat(msgbuf, "disabled interrupts ", sizeof(msgbuf));
+
+	irqs_left_disabled = irqs_disabled();
+	if (irqs_left_disabled)
 		local_irq_enable();
-	}
-	WARN(msgbuf[0], "initcall %pS returned with %s\n", fn, msgbuf);
+
+	WARN(preempt_imbalanced || irqs_left_disabled, "initcall %pS returned with %s%s\n", fn,
+	     preempt_imbalanced ? "preemption imbalance " : "",
+	     irqs_left_disabled ? "disabled interrupts " : "");
 
 	add_latent_entropy();
 	return ret;
@@ -1487,13 +1488,13 @@ static void __init do_initcalls(void)
 	size_t len = saved_command_line_len + 1;
 	char *command_line;
 
-	command_line = kzalloc(len, GFP_KERNEL);
+	command_line = kmalloc(len, GFP_KERNEL);
 	if (!command_line)
 		panic("%s: Failed to allocate %zu bytes\n", __func__, len);
 
 	for (level = 0; level < ARRAY_SIZE(initcall_levels) - 1; level++) {
 		/* Parser modifies command_line, restore it each time */
-		strcpy(command_line, saved_command_line);
+		strscpy(command_line, saved_command_line, len);
 		do_initcall_level(level, command_line);
 	}
 
@@ -1566,12 +1567,15 @@ static inline bool arch_parse_debug_rodata(char *str) { return false; }
 
 static int __init set_debug_rodata(char *str)
 {
+	if (!str)
+		return -EINVAL;
+
 	if (arch_parse_debug_rodata(str))
 		return 0;
 
-	if (str && !strcmp(str, "on"))
+	if (!strcmp(str, "on"))
 		rodata_enabled = true;
-	else if (str && !strcmp(str, "off"))
+	else if (!strcmp(str, "off"))
 		rodata_enabled = false;
 	else
 		pr_warn("Invalid option string for rodata: '%s'\n", str);
