@@ -1193,8 +1193,11 @@ static void __migrate_folio_extract(struct folio *dst,
 static void migrate_folio_undo_src(struct folio *src, int was_mapped,
 		struct anon_vma *anon_vma, bool locked, struct list_head *ret)
 {
-	if (was_mapped)
+	if (was_mapped) {
 		remove_migration_ptes(src, src, 0);
+		/* The source can be freed before the batch ends. */
+		try_to_unmap_flush();
+	}
 	/* Drop an anon rmap reference if we took one */
 	if (anon_vma)
 		put_anon_vma(anon_vma);
@@ -1926,6 +1929,8 @@ static int migrate_pages_batch(struct list_head *from,
 			 */
 			if (likely(!page_has_movable_ops(&folio->page)) &&
 			    folio_ref_count(folio) == 1) {
+				if (pass)
+					try_to_unmap_flush();
 				folio_clear_active(folio);
 				folio_clear_unevictable(folio);
 				list_del(&folio->lru);
