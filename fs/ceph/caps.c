@@ -2651,9 +2651,11 @@ int ceph_fsync(struct file *file, loff_t start, loff_t end, int datasync)
 	if (datasync)
 		goto out;
 
-	ret = ceph_wait_on_async_create(inode);
-	if (ret)
+	err = ceph_wait_on_async_create(inode);
+	if (err) {
+		ret = err;
 		goto out;
+	}
 
 	dirty = try_flush_caps(inode, &flush_tid);
 	doutc(cl, "dirty caps are %s\n", ceph_cap_string(dirty));
