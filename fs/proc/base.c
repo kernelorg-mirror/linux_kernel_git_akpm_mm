@@ -2029,9 +2029,11 @@ int pid_getattr(const struct mnt_idmap *idmap, const struct path *path,
  */
 void pid_update_inode(struct task_struct *task, struct inode *inode)
 {
+	spin_lock(&inode->i_lock);
 	task_dump_owner(task, inode->i_mode, &inode->i_uid, &inode->i_gid);
 
 	inode->i_mode &= ~(S_ISUID | S_ISGID);
+	spin_unlock(&inode->i_lock);
 	security_task_to_inode(task, inode);
 }
 
@@ -2046,6 +2048,13 @@ static int pid_revalidate(struct inode *dir, const struct qstr *name,
 	struct inode *inode;
 	struct task_struct *task;
 	int ret = 0;
+
+	/*
+	 * VFS permits -ECHILD from d_revalidate() during RCU-walk and
+	 * retries in ref-walk, where PREEMPT_RT's i_lock may sleep.
+	 */
+	if (IS_ENABLED(CONFIG_PREEMPT_RT) && (flags & LOOKUP_RCU))
+		return -ECHILD;
 
 	rcu_read_lock();
 	inode = d_inode_rcu(dentry);
@@ -2210,7 +2219,9 @@ static int map_files_d_revalidate(struct inode *dir, const struct qstr *name,
 	mmput(mm);
 
 	if (exact_vma_exists) {
+		spin_lock(&inode->i_lock);
 		task_dump_owner(task, 0, &inode->i_uid, &inode->i_gid);
+		spin_unlock(&inode->i_lock);
 
 		security_task_to_inode(task, inode);
 		status = 1;
